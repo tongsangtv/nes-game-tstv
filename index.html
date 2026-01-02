@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>NES Game - TSTV</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://unpkg.com/nostalgist"></script>
+
+    <style>
+      * {
+        box-sizing: border-box;
+        font-family: "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #000;
+        color: #fff;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      /* MENU */
+      #menu {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle, #1a1a1a, #000);
+        z-index: 10;
+      }
+      .menu-box {
+        text-align: center;
+        padding: 30px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        box-shadow: 0 0 30px rgba(0, 255, 213, 0.2);
+        width: 90%;
+        max-width: 450px;
+      }
+      h1 {
+        color: #00ffd5;
+        margin-top: 0;
+      }
+
+      /* BUTTONS */
+      button.primary-btn {
+        width: 100%;
+        padding: 15px;
+        margin: 10px 0;
+        border: none;
+        border-radius: 8px;
+        background: #00ffd5;
+        color: #003333;
+        font-weight: bold;
+        cursor: pointer;
+        transition: 0.3s;
+      }
+      button.primary-btn:hover {
+        background: #00ccaa;
+        transform: translateY(-2px);
+      }
+
+      /* GUIDE & HISTORY */
+      .section-title {
+        font-size: 14px;
+        color: #00ffd5;
+        text-align: left;
+        margin: 20px 0 10px;
+        opacity: 0.8;
+      }
+      .guide {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        font-size: 12px;
+        text-align: left;
+        background: #111;
+        padding: 10px;
+        border-radius: 8px;
+      }
+
+      #history-list {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .history-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #222;
+        padding: 10px;
+        margin-bottom: 5px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .history-item:hover {
+        background: #333;
+        border-left: 4px solid #00ffd5;
+      }
+      .delete-btn {
+        color: #ff4d4d;
+        padding: 5px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      /* GAME UI */
+      #game-container {
+        width: 100%;
+        height: 100%;
+        display: none;
+      }
+      #top-bar {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 20;
+        display: none;
+      }
+      #top-bar button {
+        background: rgba(0, 255, 213, 0.7);
+        border: none;
+        padding: 8px 15px;
+        border-radius: 20px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="menu">
+      <div class="menu-box">
+        <h1>🎮 NES GAME WEB</h1>
+        <button id="btn-play" class="primary-btn">
+          📂 TẢI GAME MỚI (.NES)
+        </button>
+
+        <div class="section-title">⌨️ CÁCH ĐIỀU KHIỂN</div>
+        <div class="guide">
+          <span>Di chuyển: <b>Mũi tên</b></span>
+          <span>Nút A: <b>X</b></span>
+          <span>Nút B: <b>Z</b></span>
+          <span>Start: <b>Enter</b></span>
+          <span>Select: <b>R-Shift</b></span>
+        </div>
+
+        <div class="section-title">🕒 GAME ĐÃ LƯU (Bấm để chơi ngay)</div>
+        <ul id="history-list"></ul>
+      </div>
+    </div>
+
+    <div id="top-bar">
+      <button onclick="location.reload()">⏮ Trở về Menu</button>
+      <button onclick="document.documentElement.requestFullscreen()">
+        ⛶ Toàn màn hình
+      </button>
+    </div>
+    <div id="game-container"></div>
+
+    <script>
+      let db;
+      const request = indexedDB.open("NES_GAMES_DB", 1);
+
+      // 1. Khởi tạo Database để lưu ROM
+      request.onupgradeneeded = (e) => {
+        db = e.target.result;
+        db.createObjectStore("roms", { keyPath: "name" });
+      };
+      request.onsuccess = (e) => {
+        db = e.target.result;
+        renderHistory();
+      };
+
+      // 2. Xử lý khi chọn file mới
+      document
+        .getElementById("btn-play")
+        .addEventListener("click", async () => {
+          try {
+            const [fileHandle] = await window.showOpenFilePicker();
+            const file = await fileHandle.getFile();
+
+            // Lưu vào IndexedDB
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+              const transaction = db.transaction(["roms"], "readwrite");
+              transaction.objectStore("roms").put({
+                name: file.name,
+                data: e.target.result,
+                date: Date.now(),
+              });
+              startGame(file.name, e.target.result);
+            };
+            reader.readAsArrayBuffer(file);
+          } catch (err) {}
+        });
+
+      // 3. Hàm khởi chạy Game
+      async function startGame(fileName, arrayBuffer) {
+        document.getElementById("menu").style.display = "none";
+        document.getElementById("top-bar").style.display = "block";
+        const container = document.getElementById("game-container");
+        container.style.display = "block";
+
+        // Chuyển ArrayBuffer thành Blob để Nostalgist đọc được
+        const blob = new Blob([arrayBuffer]);
+        const file = new File([blob], fileName);
+
+        await Nostalgist.nes(file, { element: container });
+      }
+
+      // 4. Hiển thị danh sách game đã lưu
+      function renderHistory() {
+        const list = document.getElementById("history-list");
+        list.innerHTML = "";
+
+        const transaction = db.transaction(["roms"], "readonly");
+        const store = transaction.objectStore("roms");
+
+        store.getAll().onsuccess = (e) => {
+          const games = e.target.result;
+          if (games.length === 0) {
+            list.innerHTML =
+              "<li style='font-size:12px;opacity:0.5'>Chưa có game nào được lưu</li>";
+            return;
+          }
+
+          games
+            .sort((a, b) => b.date - a.date)
+            .forEach((game) => {
+              const li = document.createElement("li");
+              li.className = "history-item";
+              li.innerHTML = `
+              <span onclick="playStoredGame('${game.name}')">🎮 ${game.name}</span>
+              <span class="delete-btn" onclick="deleteGame('${game.name}')">Xóa</span>
+            `;
+              list.appendChild(li);
+            });
+        };
+      }
+
+      // 5. Chơi game từ bộ nhớ
+      function playStoredGame(name) {
+        const transaction = db.transaction(["roms"], "readonly");
+        transaction.objectStore("roms").get(name).onsuccess = (e) => {
+          startGame(e.target.result.name, e.target.result.data);
+        };
+      }
+
+      // 6. Xóa game khỏi bộ nhớ
+      function deleteGame(name) {
+        if (confirm("Xóa game này khỏi bộ nhớ?")) {
+          const transaction = db.transaction(["roms"], "readwrite");
+          transaction.objectStore("roms").delete(name).onsuccess =
+            renderHistory;
+        }
+      }
+    </script>
+  </body>
+</html>
